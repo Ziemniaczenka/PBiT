@@ -1,0 +1,10 @@
+{
+    "session": "Sebastian_120bpm",
+    "cadence_bpm": 125.69384224577402,
+    "total_steps": 60,
+    "rr_mean_ms": 446.1506187787674,
+    "rr_std_ms": 38.57355415758907,
+    "pq_mean_ms": 115.56441464672511,
+    "qt_mean_ms": 251.1262904170418,
+    "hr_mean_bpm": 134.4837314453041
+}
