@@ -6,6 +6,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import neurokit2 as nk
 from scipy.signal import find_peaks
+import warnings
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 def load_sensor_data(filepath, sensor_key):
     if not os.path.exists(filepath): return None, None, None
@@ -60,39 +63,30 @@ for idx in wybrane_indeksy:
     hr_sensor = load_hr_data(f"{session_base}_heartRate_stream.json")
     fs_ecg_int = int(round(fs_ecg))
 
-    # 1. AKCELEROMETR - Filtracja
+    # 1. AKCELEROMETR
     acc_y_no_gravity = acc_signal - np.mean(acc_signal)
     acc_filtered = nk.signal_filter(acc_y_no_gravity, sampling_rate=fs_acc, lowcut=0.5, highcut=10)
     
     raw_acc_peaks, _ = find_peaks(acc_filtered, height=1.5, prominence=0.8, distance=fs_acc/4)
     
-    # INTELIGENTNE ODRZUCANIE ODSTAJĄCYCH KROKÓW (Outliers Filter)
     acc_peaks = []
     if len(raw_acc_peaks) > 3:
         step_times = time_acc[raw_acc_peaks]
         diffs = np.diff(step_times)
-        
-        # Obliczamy medianę czasu trwania kroku, odrzucając ewidentne przerwy
-        valid_diffs = diffs[(diffs > 0.25) & (diffs < 1.5)] # fizjologiczny krok to 40-240 bpm
+        valid_diffs = diffs[(diffs > 0.25) & (diffs < 1.5)] 
         median_diff = np.median(valid_diffs) if len(valid_diffs) > 0 else 0.5
         
-        # Filtrujemy piki: krok jest ważny, jeśli dystans do poprzedniego lub następnego 
-        # mieści się w marginesie błędu (np. +/- 40% od mediany dla metronomu)
         valid_peaks = []
         for i in range(len(raw_acc_peaks)):
             dist_prev = step_times[i] - step_times[i-1] if i > 0 else np.inf
             dist_next = step_times[i+1] - step_times[i] if i < len(raw_acc_peaks)-1 else np.inf
-            
             if abs(dist_prev - median_diff) < 0.4 * median_diff or abs(dist_next - median_diff) < 0.4 * median_diff:
                 valid_peaks.append(raw_acc_peaks[i])
-        
         acc_peaks = np.array(valid_peaks)
     else:
         acc_peaks = raw_acc_peaks
 
     num_steps = len(acc_peaks)
-
-    # Bezpieczne wyliczanie kadencji tylko na przefiltrowanym bloku
     if num_steps > 1:
         t0_shift = time_acc[acc_peaks[0]]
         walk_duration = time_acc[acc_peaks[-1]] - time_acc[acc_peaks[0]]
@@ -116,7 +110,9 @@ for idx in wybrane_indeksy:
     r_onsets = waves_info['ECG_R_Onsets']
     t_offsets = waves_info['ECG_T_Offsets']
 
-    for i in range(1, len(r_peaks)):
+    max_idx = min(len(r_peaks), len(p_onsets), len(r_onsets), len(t_offsets))
+
+    for i in range(1, max_idx):
         r_idx = r_peaks[i]
         rr = (r_idx - r_peaks[i-1]) / fs_ecg * 1000
         p_on, r_on, t_off = p_onsets[i], r_onsets[i], t_offsets[i]
@@ -124,8 +120,9 @@ for idx in wybrane_indeksy:
         pq = (r_on - p_on) / fs_ecg * 1000 if (not np.isnan(p_on) and not np.isnan(r_on) and r_on > p_on) else np.nan
         qt = (t_off - r_on) / fs_ecg * 1000 if (not np.isnan(r_on) and not np.isnan(t_off) and t_off > r_on) else np.nan
 
-        if not (100 < pq < 300): pq = np.nan
-        if not (200 < qt < 600): qt = np.nan
+        max_qt = min(600, rr * 0.85) 
+        if np.isnan(qt) or not (150 < qt < max_qt): qt = np.nan
+        if np.isnan(pq) or not (50 < pq < 350): pq = np.nan
 
         beats_time.append(time_ecg[r_idx])
         beats_rr.append(rr)
@@ -133,36 +130,69 @@ for idx in wybrane_indeksy:
         beats_qt.append(qt)
 
     df_beats = pd.DataFrame({"Time_s": beats_time, "RR_ms": beats_rr, "PQ_ms": beats_pq, "QT_ms": beats_qt})
-    df_beats['PQ_smooth'] = df_beats['PQ_ms'].interpolate().rolling(window=5, center=True).mean()
-    df_beats['QT_smooth'] = df_beats['QT_ms'].interpolate().rolling(window=5, center=True).mean()
+    df_beats['PQ_smooth'] = df_beats['PQ_ms'].interpolate(limit_direction='both').rolling(window=15, center=True, min_periods=1).mean()
+    df_beats['QT_smooth'] = df_beats['QT_ms'].interpolate(limit_direction='both').rolling(window=15, center=True, min_periods=1).mean()
 
-    # 3. Zapis
-    hr_mean = 60000 / np.nanmean(beats_rr) if np.nanmean(beats_rr) > 0 else np.nan
+    # Wyliczanie Tętna z EKG na całą oś czasu
+    hr_calculated = nk.signal_rate(r_peaks, sampling_rate=fs_ecg_int, desired_length=len(ecg_cleaned))
+    time_hr_sensor = np.linspace(-t0_shift, total_time_s, len(hr_sensor)) if len(hr_sensor) > 0 else []
+
+    # 3. DYNAMIKA HR (Zaawansowane parametry)
+    # Wygładzamy tętno oknem 4-sekundowym, aby odrzucić błędy pomiaru przy szukaniu Max HR
+    hr_smoothed = pd.Series(hr_calculated).rolling(window=fs_ecg_int*4, min_periods=1, center=True).mean().values
+    
+    max_hr_idx = np.nanargmax(hr_smoothed)
+    max_hr = hr_smoothed[max_hr_idx]
+    peak_hr_time = time_ecg[max_hr_idx]
+
+    # HR na starcie (średnia z okna +/- 2 sekundy wokół t=0)
+    mask_start = (time_ecg >= -2.0) & (time_ecg <= 2.0)
+    hr_start = np.nanmean(hr_smoothed[mask_start]) if np.sum(mask_start) > 0 else np.nan
+
+    # HR na końcu zapisu (średnia z ostatnich 5 sekund zapisu - restytucja)
+    mask_end = (time_ecg >= time_ecg[-1] - 5.0)
+    hr_end = np.nanmean(hr_smoothed[mask_end]) if np.sum(mask_end) > 0 else np.nan
+
+    # Kalkulacja różnic
+    hr_delta = max_hr - hr_start
+    hr_recovery = max_hr - hr_end
+
+    # Bezpieczne średnie
+    hr_mean = 60000 / np.nanmean(beats_rr) if np.sum(~np.isnan(beats_rr)) > 0 else np.nan
+    mean_pq = np.nanmean(beats_pq) if np.sum(~np.isnan(beats_pq)) > 0 else np.nan
+    mean_qt = np.nanmean(beats_qt) if np.sum(~np.isnan(beats_qt)) > 0 else np.nan
+
+    # 4. ZAPIS DO PLIKU
     summary_data = {
-        "session": session_name, "cadence_bpm": cadence, "total_steps": num_steps,
-        "rr_mean_ms": np.nanmean(beats_rr), "rr_std_ms": np.nanstd(beats_rr),
-        "pq_mean_ms": np.nanmean(beats_pq), "qt_mean_ms": np.nanmean(beats_qt),
-        "hr_mean_bpm": hr_mean
+        "session": session_name, 
+        "total_steps": num_steps, 
+        "cadence_bpm": cadence, 
+        "walk_duration_s": walk_duration,
+        "hr_start_bpm": hr_start,
+        "hr_max_bpm": max_hr,
+        "time_to_peak_s": peak_hr_time,
+        "hr_delta_bpm": hr_delta,
+        "hr_recovery_bpm": hr_recovery,
+        "hr_mean_bpm": hr_mean,
+        "rr_mean_ms": np.nanmean(beats_rr) if np.sum(~np.isnan(beats_rr)) > 0 else np.nan, 
+        "rr_std_ms": np.nanstd(beats_rr) if np.sum(~np.isnan(beats_rr)) > 0 else np.nan,
+        "pq_mean_ms": mean_pq, 
+        "qt_mean_ms": mean_qt
     }
     with open(os.path.join(OUTPUT_DIR, f"{session_name}_summary.json"), 'w') as f: json.dump(summary_data, f, indent=4)
     df_beats.to_csv(os.path.join(OUTPUT_DIR, f"{session_name}_beats.csv"), index=False)
 
-    hr_calculated = nk.signal_rate(r_peaks, sampling_rate=fs_ecg_int, desired_length=len(ecg_cleaned))
-    time_hr_sensor = np.linspace(-t0_shift, total_time_s, len(hr_sensor)) if len(hr_sensor) > 0 else []
-
     # ==========================================
-    # 4. WIZUALIZACJA (4 WYKRESY)
+    # 5. WIZUALIZACJA 
     # ==========================================
     fig, axes = plt.subplots(4, 1, figsize=(14, 16))
     fig.subplots_adjust(top=0.90, hspace=0.4)
     
-    stats_text = (f"Plik: {session_name}   |   Wykryte kroki: {num_steps}   |   Kadencja (filtrowana): {cadence:.1f} kr/min   |   Średnie HR: {hr_mean:.1f} bpm\n"
-                  f"Średnie PQ: {np.nanmean(beats_pq):.1f} ms   |   Średnie QT: {np.nanmean(beats_qt):.1f} ms")
+    stats_text = (f"Plik: {session_name}   |   Kadencja: {cadence:.1f} kr/min (Czas: {walk_duration:.1f}s)   |   Max HR: {max_hr:.1f} bpm (Peak w {peak_hr_time:.1f}s)\n"
+                  f"Przyrost HR: +{hr_delta:.1f} bpm   |   Spadek HR na koniec: -{hr_recovery:.1f} bpm   |   Średnie QT: {mean_qt:.1f} ms")
     fig.suptitle(stats_text, fontsize=12, fontweight='bold', color='darkblue')
 
     # WYKRES 1: EKG
-    max_hr_idx = np.nanargmax(hr_calculated)
-    peak_hr_time = time_ecg[max_hr_idx]
     plot_start = max(time_ecg[0], peak_hr_time - 2.5)
     plot_end = plot_start + 5.0
     
@@ -179,24 +209,18 @@ for idx in wybrane_indeksy:
     
     axes[0].set_title(f"Morfologia EKG w szczytowym wysiłku (Centrum: {peak_hr_time:.1f} s)"); axes[0].legend(loc="upper right"); axes[0].grid(True)
 
-    # WYKRES 2: Akcelerometr (Oś Y)
+    # WYKRES 2: Akcelerometr
     axes[1].plot(time_acc, acc_filtered, color='blue', alpha=0.7)
-    
-    # Rysowanie wszystkich surowych pików szarym 'x' (odrzuconych), a poprawnych pomarańczową kropką
     axes[1].scatter(time_acc[raw_acc_peaks], acc_filtered[raw_acc_peaks], color='gray', marker='x', zorder=4, label="Odrzucone szumy")
     if len(acc_peaks) > 0:
         axes[1].scatter(time_acc[acc_peaks], acc_filtered[acc_peaks], color='orange', zorder=5, label=f"Ważne kroki ({num_steps})")
-    
     axes[1].set_title("Detekcja kroków (Tylko oś Y pionowa)"); axes[1].legend(); axes[1].grid(True)
 
     # WYKRES 3: Tętno
-    axes[2].plot(time_ecg, hr_calculated, color='green', label="HR z EKG")
+    axes[2].plot(time_ecg, hr_smoothed, color='green', label="HR z EKG (Wygładzone)")
     if len(time_hr_sensor) > 0: axes[2].plot(time_hr_sensor, hr_sensor, color='purple', linestyle='--', label="HR z Sensora")
     axes[2].axvline(x=0, color='red', linestyle='--', label='Start wysiłku')
-    
-    # PRZYWRÓCONA POMARAŃCZOWA LINIA PEAK HR
-    axes[2].axvline(x=peak_hr_time, color='orange', linestyle=':', linewidth=2, label='Max HR (wycinek EKG)')
-    
+    axes[2].axvline(x=peak_hr_time, color='orange', linestyle=':', linewidth=2, label='Max HR')
     axes[2].set_title("Profil tętna"); axes[2].set_ylabel("Tętno [bpm]"); axes[2].legend(); axes[2].grid(True)
 
     # WYKRES 4: Dynamika PQ i QT

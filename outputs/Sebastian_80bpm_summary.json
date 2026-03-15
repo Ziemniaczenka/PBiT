@@ -1,10 +1,16 @@
 {
     "session": "Sebastian_80bpm",
-    "cadence_bpm": 99.08694646019231,
     "total_steps": 60,
+    "cadence_bpm": 96.3634502356649,
+    "walk_duration_s": 36.73592001264622,
+    "hr_start_bpm": 108.3235739966782,
+    "hr_max_bpm": 145.65987838959757,
+    "time_to_peak_s": 40.29635622887521,
+    "hr_delta_bpm": 37.33630439291936,
+    "hr_recovery_bpm": 17.60005593034893,
+    "hr_mean_bpm": 131.10271713041166,
     "rr_mean_ms": 457.6564186714473,
     "rr_std_ms": 39.51175775106162,
-    "pq_mean_ms": 117.45321776929599,
-    "qt_mean_ms": 257.48107914138444,
-    "hr_mean_bpm": 131.10271713041166
+    "pq_mean_ms": 88.155145428665,
+    "qt_mean_ms": 254.71276785902043
 }

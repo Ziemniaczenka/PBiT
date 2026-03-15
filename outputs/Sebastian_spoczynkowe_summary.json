@@ -1,10 +1,16 @@
 {
     "session": "Sebastian_spoczynkowe",
-    "cadence_bpm": 0,
     "total_steps": 0,
+    "cadence_bpm": 0,
+    "walk_duration_s": 0,
+    "hr_start_bpm": 85.9573681577544,
+    "hr_max_bpm": 101.25004786415968,
+    "time_to_peak_s": 60.375,
+    "hr_delta_bpm": 15.29267970640528,
+    "hr_recovery_bpm": 4.12734427463397,
+    "hr_mean_bpm": 89.97451420187164,
     "rr_mean_ms": 666.8555038305713,
     "rr_std_ms": 48.52669740411077,
     "pq_mean_ms": 104.88179290316512,
-    "qt_mean_ms": 349.9768581758575,
-    "hr_mean_bpm": 89.97451420187164
+    "qt_mean_ms": 349.9768581758575
 }

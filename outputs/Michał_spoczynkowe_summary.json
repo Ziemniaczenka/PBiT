@@ -1,10 +1,16 @@
 {
     "session": "Micha\u0142_spoczynkowe",
-    "cadence_bpm": 0,
     "total_steps": 1,
+    "cadence_bpm": 0,
+    "walk_duration_s": 0,
+    "hr_start_bpm": 93.7382056737387,
+    "hr_max_bpm": 105.6101500931444,
+    "time_to_peak_s": 40.39428326234422,
+    "hr_delta_bpm": 11.871944419405693,
+    "hr_recovery_bpm": 12.459503770308814,
+    "hr_mean_bpm": 92.46871877559045,
     "rr_mean_ms": 648.8680798704717,
     "rr_std_ms": 69.9087289571279,
-    "pq_mean_ms": 148.13777963437462,
-    "qt_mean_ms": 251.00324453273848,
-    "hr_mean_bpm": 92.46871877559045
+    "pq_mean_ms": 145.02730513044654,
+    "qt_mean_ms": 250.0566666577164
 }
